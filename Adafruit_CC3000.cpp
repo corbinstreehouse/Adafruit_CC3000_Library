@@ -1057,7 +1057,7 @@ bool Adafruit_CC3000::connectSecure(const char *ssid, const char *key, int32_t s
   CHECK_SUCCESS(wlan_ioctl_set_connection_policy(0, 0, 0),
                 "Failed setting the connection policy",
                 false);
-  delay(500);
+  delay(100); // corbin: was 500, I lowered it. A delay without any comments...bad programmer!
   CHECK_SUCCESS(wlan_connect(secMode, (char *)ssid, strlen(ssid),
                              NULL,
                              (unsigned char *)key, strlen(key)),
@@ -1092,6 +1092,9 @@ bool Adafruit_CC3000::connectToAP(const char *ssid, const char *key, uint8_t sec
     cc3k_int_poll();
     /* MEME: not sure why this is absolutely required but the cc3k freaks
        if you dont. maybe bootup delay? */
+      
+      // corbin...move to a state machine so we don't block everything else...
+      
     // Setup a 4 second SSID scan
     scanSSIDs(4000);
     // Wait for results
