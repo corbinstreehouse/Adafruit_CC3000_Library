@@ -80,11 +80,11 @@ UINT8 profileArray[SMART_CONFIG_PROFILE_SIZE];
 #define SL_PATCHES_REQUEST_FORCE_HOST	(1)
 #define SL_PATCHES_REQUEST_FORCE_NONE	(2)
 
-
-#define      WLAN_SEC_UNSEC (0)
-#define      WLAN_SEC_WEP	(1)
-#define      WLAN_SEC_WPA	(2)
-#define      WLAN_SEC_WPA2	(3)
+//wtf? Aren't these in wlan.h?
+//#define      WLAN_SEC_UNSEC (0)
+//#define      WLAN_SEC_WEP	(1)
+//#define      WLAN_SEC_WPA	(2)
+//#define      WLAN_SEC_WPA2	(3)
 
 
 #define WLAN_SL_INIT_START_PARAMS_LEN			(1)
