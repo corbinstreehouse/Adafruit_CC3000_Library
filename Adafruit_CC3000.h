@@ -30,6 +30,7 @@
 #include "utility/netapp.h"
 #include "ccspi.h"
 #include "Client.h"
+#include "CC3000_MDNS.h"
 
 #if defined(__arm__) && defined(__SAM3X8E__) // Arduino Due
   #define SPI_CLOCK_DIVIDER 6 // used to set the speed for the SPI bus; 6 == 14 Mhz on the Arduino Due
@@ -126,6 +127,26 @@ class Adafruit_CC3000_Client : public Client {
 
 };
 
+#define RESPONSE_WAITING_DURATION 1000 // 1 SECOND...more than enough time
+
+// A simple state machine to automatically connect/reconnect and update the DNS
+enum AFWifiState {
+    AFWifiStateUninitialized,
+    AFWifiStateBegin,
+    AFWifiStateConnecting,
+    AFWifiStateWaitingForConnectionResponse,
+    AFWifiStateGettingDHCP,
+    AFWifiStateBeginDNS,
+    AFWifiStateReady,
+};
+
+enum AFWifiSecurityMode {
+    AFWifiSecurityModeUnsecured = WLAN_SEC_UNSEC,
+    AFWifiSecurityModeWEP = WLAN_SEC_WEP,
+    AFWifiSecurityModeWPA = WLAN_SEC_WPA,
+    AFWifiSecurityModeWPA2 = WLAN_SEC_WPA2,
+};
+
 // Ugly but necessary to include the server header after the client is fully defined.
 // A forward reference in the server header won't cut it because the server needs to contain
 // instances of the client.  The client definition above can be pulled into a separate
@@ -135,11 +156,22 @@ class Adafruit_CC3000_Client : public Client {
 class Adafruit_CC3000 {
   public:
     Adafruit_CC3000(uint8_t csPin, uint8_t irqPin, uint8_t vbatPin, uint8_t spispeed = SPI_CLOCK_DIVIDER, Print* cc3kPrinter = CC3K_DEFAULT_PRINTER);
-    bool     begin(uint8_t patchReq = 0, bool useSmartConfigData = false, const char *_deviceName = NULL);
-    void     reboot(uint8_t patchReq = 0);
+
+    // Set what you are connecting to. Changing this restarts the state appropriately and (shoudl) disconnect from the last wifi network
+    // securityMode can be WLAN_SEC_UNSEC, WLAN_SEC_WEP, WLAN_SEC_WPA or WLAN_SEC_WPA2
+    void setNetworkName(const char *ssid, const char *key = NULL, AFWifiSecurityMode securityMode = AFWifiSecurityModeUnsecured);
+    void setDNSName(const char *dnsName); // optional DNS name for this machine
+    void process(); // Call each tick of the run loop when ready to start moving to the next states. 
+
+    // When isReady() returns YES you can start doing stuff
+    bool isReady() { return m_state == AFWifiStateReady; }
+ 
+    // These only work after calling begin (or process at least once to move us out of the unitialized state)
+    void     reboot();
     void     stop(void);
     bool     disconnect(void);
     bool     deleteProfiles(void);
+    
     void     printHex(const byte * data, const uint32_t numBytes);
     void     printHexChar(const byte * data, const uint32_t numBytes);
     void     printIPdots(uint32_t ip);
@@ -150,21 +182,24 @@ class Adafruit_CC3000 {
     bool     setStaticIPAddress(uint32_t ip, uint32_t subnetMask, uint32_t defaultGateway, uint32_t dnsServer);
     bool     setDHCP();
 
-    bool     connectToAP(const char *ssid, const char *key, uint8_t secmode, uint8_t attempts = 0);
-    bool     connectSecure(const char *ssid, const char *key, int32_t secMode);
-    bool     connectOpen(const char *ssid); 
     bool     checkConnected(void);
     bool     checkDHCP(void);
     bool     getIPAddress(uint32_t *retip, uint32_t *netmask, uint32_t *gateway, uint32_t *dhcpserv, uint32_t *dnsserv);
 
     bool     checkSmartConfigFinished(void);
 
+    AFWifiState getState() {return m_state; }
+    
+    // set this early if needed to do a patch...
+    void setPatchReq(uint8_t value) { m_patchReq = value; };
+    
     Adafruit_CC3000_Client connectTCP(uint32_t destIP, uint16_t destPort);
     Adafruit_CC3000_Client connectUDP(uint32_t destIP, uint16_t destPort);
      
     #ifndef CC3000_TINY_DRIVER
     bool     getFirmwareVersion(uint8_t *major, uint8_t *minor);
-    status_t getStatus(void);
+
+    status_t getStatus(void); // driver status..not the same as our high level state machine status
     bool     startSSIDscan(uint32_t *index);
     void     stopSSIDscan();
     uint8_t  getNextSSID(uint8_t *rssi, uint8_t *secMode, char *ssidname);
@@ -174,21 +209,30 @@ class Adafruit_CC3000 {
 
     bool     getIPConfig(tNetappIpconfigRetArgs *ipConfig);
 
-
     uint16_t ping(uint32_t ip, uint8_t attempts=3,  uint16_t timeout=500, uint8_t size=32);
     uint16_t getHostByName(char *hostname, uint32_t *ip);
-    #endif
-
-    /* Functions that aren't available with the tiny driver */
-    #ifndef CC3000_TINY_DRIVER
     bool     scanSSIDs(uint32_t time);
     #endif
 
-    void setPrinter(Print*);
+    void setPrinter(Print *printer);
 
   private:
-    bool _initialised;
+    // TODO: smart config option
+    bool     begin(bool useSmartConfigData = false, const char *_deviceName = NULL);
 
+    // now these are async. strings are NOT copied, so you must keep them alive outside of this class
+    bool     connectToAP(const char *ssid, const char *key, uint8_t secmode, uint8_t attempts = 0);
+    bool     connectSecure(const char *ssid, const char *key, int32_t secMode);
+    bool     connectOpen(const char *ssid);
+    
+    AFWifiState m_state;
+    MDNSResponder m_mdns; // wait, do I need this? Or can i pass _deviceName?
+    char *m_ssid;
+    char *m_password;
+    char *m_dnsName;
+    AFWifiSecurityMode m_secMode;
+    uint8_t m_patchReq; // Not sure why this is used
+    uint32_t m_lastTime;
 };
 
 extern Print* CC3KPrinter;

@@ -36,6 +36,17 @@
 
 uint8_t g_csPin, g_irqPin, g_vbatPin, g_IRQnum, g_SPIspeed;
 
+#define DEBUG 1
+#if DEBUG
+  #warning "DEBUG CODE IS ON!!!! "
+  #define DEBUG_PRINTLN(a) Serial.println(a)
+  #define DEBUG_PRINTF(a, ...) Serial.printf(a, ##__VA_ARGS__)
+#else
+  #define DEBUG_PRINTLN(a)
+  #define DEBUG_PRINTF(a, ...)
+#endif
+
+
 static const uint8_t dreqinttable[] = {
 #if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__) || defined (__AVR_ATmega328__) || defined(__AVR_ATmega8__) 
   2, 0,
@@ -166,11 +177,6 @@ bool Adafruit_CC3000::scanSSIDs(uint32_t time)
   const unsigned long intervalTime[16] = { 2000, 2000, 2000, 2000,  2000,
     2000, 2000, 2000, 2000, 2000, 2000, 2000, 2000, 2000, 2000, 2000 };
 
-  if (!_initialised)
-  {
-    return false;
-  }
-
   // We can abort a scan with a time of 0
   if (time)
   {
@@ -205,17 +211,26 @@ bool Adafruit_CC3000::scanSSIDs(uint32_t time)
 /**************************************************************************/
 Adafruit_CC3000::Adafruit_CC3000(uint8_t csPin, uint8_t irqPin, uint8_t vbatPin, uint8_t SPIspeed, Print* cc3kPrinter)
 {
-  _initialised = false;
+  m_state = AFWifiStateUninitialized;
   g_csPin = csPin;
   g_irqPin = irqPin;
   g_vbatPin = vbatPin;
   g_IRQnum = 0xFF;
   g_SPIspeed = SPIspeed;
+  m_patchReq = 0;
+  
+  m_ssid = NULL;
+  m_password = NULL;
+  m_dnsName = NULL;
+//  m_secMode =
+
 
   cc3000Bitset.clear();
 
   CC3KPrinter = cc3kPrinter;
 }
+
+// yeah, no destructor..this thing is global...
 
 /* *********************************************************************** */
 /*                                                                         */
@@ -237,9 +252,10 @@ Adafruit_CC3000::Adafruit_CC3000(uint8_t csPin, uint8_t irqPin, uint8_t vbatPin,
               clean connection
 */
 /**************************************************************************/
-bool Adafruit_CC3000::begin(uint8_t patchReq, bool useSmartConfigData, const char *_deviceName)
+bool Adafruit_CC3000::begin(bool useSmartConfigData, const char *_deviceName)
 {
-  if (_initialised) return true;
+  // We are done once we are past the begin state
+  if (m_state > AFWifiStateBegin) return true;
 
   #ifndef CORE_ADAX
   // determine irq #
@@ -270,7 +286,7 @@ bool Adafruit_CC3000::begin(uint8_t patchReq, bool useSmartConfigData, const cha
             WriteWlanPin);
   DEBUGPRINT_F("start\n\r");
 
-  wlan_start(patchReq);
+  wlan_start(m_patchReq);
   
   DEBUGPRINT_F("ioctl\n\r");
   // Check if we should erase previous stored connection details
@@ -302,11 +318,13 @@ bool Adafruit_CC3000::begin(uint8_t patchReq, bool useSmartConfigData, const cha
                         HCI_EVNT_WLAN_KEEPALIVE),
                         "WLAN Set Event Mask FAIL", false);
 
-  _initialised = true;
-
   // Wait for re-connection if we're using SmartConfig data
+  // TODO: re-enable smart config...if i want
+  /*
+   
   if (useSmartConfigData)
   {
+    // TODO: update m_state
     // Wait for a connection
     uint32_t timeout = 0;
     while(!cc3000Bitset.test(CC3000BitSet::IsConnected))
@@ -323,12 +341,14 @@ bool Adafruit_CC3000::begin(uint8_t patchReq, bool useSmartConfigData, const cha
       delay(10);
     }
     
+    // TODO: corbin, state machine..
     delay(1000);  
     if (cc3000Bitset.test(CC3000BitSet::HasDHCP))
     {
       mdnsAdvertiser(1, (char *) _deviceName, strlen(_deviceName));
     }
   }
+   */
     
   return true;
 }
@@ -455,16 +475,14 @@ uint32_t Adafruit_CC3000::IP2U32(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
     @brief   Reboot CC3000 (stop then start)
 */
 /**************************************************************************/
-void Adafruit_CC3000::reboot(uint8_t patch)
+void Adafruit_CC3000::reboot()
 {
-  if (!_initialised)
-  {
-    return;
+  if (m_state > AFWifiStateUninitialized) {
+    wlan_stop();
+    // TODO: I could easily remove this delay with my state machine
+    delay(5000);
+    wlan_start(m_patchReq);
   }
-
-  wlan_stop();
-  delay(5000);
-  wlan_start(patch);
 }
 
 /**************************************************************************/
@@ -474,12 +492,10 @@ void Adafruit_CC3000::reboot(uint8_t patch)
 /**************************************************************************/
 void Adafruit_CC3000::stop(void)
 {
-  if (!_initialised)
-  {
-    return;
+  if (m_state > AFWifiStateUninitialized) {
+    wlan_stop();
+    m_state = AFWifiStateUninitialized;
   }
-
-  wlan_stop();
 }
 
 /**************************************************************************/
@@ -491,14 +507,13 @@ void Adafruit_CC3000::stop(void)
 /**************************************************************************/
 bool Adafruit_CC3000::disconnect(void)
 {
-  if (!_initialised)
-  {
+  if (m_state > AFWifiStateUninitialized) {
+    long retVal = wlan_disconnect();
+    m_state = AFWifiStateConnecting; // how is this different from stop? is this the right state to go to?
+    return retVal != 0 ? false : true;
+  } else {
     return false;
   }
-
-  long retVal = wlan_disconnect();
-
-  return retVal != 0 ? false : true;
 }
 
 /**************************************************************************/
@@ -510,11 +525,6 @@ bool Adafruit_CC3000::disconnect(void)
 /**************************************************************************/
 bool Adafruit_CC3000::deleteProfiles(void)
 {
-  if (!_initialised)
-  {
-    return false;
-  }
-
   CHECK_SUCCESS(wlan_ioctl_set_connection_policy(0, 0, 0),
                "deleteProfiles connection failure", false);
   CHECK_SUCCESS(wlan_ioctl_del_profile(255),
@@ -534,11 +544,6 @@ bool Adafruit_CC3000::deleteProfiles(void)
 /**************************************************************************/
 bool Adafruit_CC3000::getMacAddress(uint8_t address[6])
 {
-  if (!_initialised)
-  {
-    return false;
-  }
-
   CHECK_SUCCESS(nvmem_read(NVMEM_MAC_FILEID, 6, 0, address),
                 "Failed reading MAC address!", false);
 
@@ -556,11 +561,6 @@ bool Adafruit_CC3000::getMacAddress(uint8_t address[6])
 /**************************************************************************/
 bool Adafruit_CC3000::setMacAddress(uint8_t address[6])
 {
-  if (!_initialised)
-  {
-    return false;
-  }
-
   if (address[0] == 0)
   {
     return false;
@@ -571,7 +571,7 @@ bool Adafruit_CC3000::setMacAddress(uint8_t address[6])
 
   wlan_stop();
   delay(200);
-  wlan_start(0);
+  wlan_start(m_patchReq);
 
   return true;
 }
@@ -610,7 +610,7 @@ bool Adafruit_CC3000::setStaticIPAddress(uint32_t ip, uint32_t subnetMask, uint3
   // Reset CC3000 to use modified setting.
   wlan_stop();
   delay(200);
-  wlan_start(0);
+  wlan_start(m_patchReq);
   return true;
 }
 
@@ -640,7 +640,7 @@ bool Adafruit_CC3000::setDHCP()
 /**************************************************************************/
 bool Adafruit_CC3000::getIPAddress(uint32_t *retip, uint32_t *netmask, uint32_t *gateway, uint32_t *dhcpserv, uint32_t *dnsserv)
 {
-  if (!_initialised) return false;
+  if (m_state == AFWifiStateUninitialized) return false;
   if (!cc3000Bitset.test(CC3000BitSet::IsConnected)) return false;
   if (!cc3000Bitset.test(CC3000BitSet::HasDHCP)) return false;
 
@@ -674,7 +674,7 @@ bool Adafruit_CC3000::getFirmwareVersion(uint8_t *major, uint8_t *minor)
 {
   uint8_t fwpReturn[2];
 
-  if (!_initialised)
+  if (m_state == AFWifiStateUninitialized)
   {
     return false;
   }
@@ -700,7 +700,7 @@ bool Adafruit_CC3000::getFirmwareVersion(uint8_t *major, uint8_t *minor)
 #ifndef CC3000_TINY_DRIVER
 status_t Adafruit_CC3000::getStatus()
 {
-  if (!_initialised)
+  if (m_state == AFWifiStateUninitialized)
   {
     return STATUS_DISCONNECTED;
   }
@@ -746,7 +746,7 @@ ResultStruct_t SSIDScanResultBuff;
 
 
 bool Adafruit_CC3000::startSSIDscan(uint32_t *index) {
-  if (!_initialised)
+  if (m_state == AFWifiStateUninitialized)
   {
     return false;
   }
@@ -806,7 +806,7 @@ bool Adafruit_CC3000::startSmartConfig(const char *_deviceName, const char *smar
 
   uint32_t   timeout = 0;
 
-  if (!_initialised) {
+  if (m_state == AFWifiStateUninitialized) {
     return false;
   }
 
@@ -831,7 +831,7 @@ bool Adafruit_CC3000::startSmartConfig(const char *_deviceName, const char *smar
   // Reset the CC3000
   wlan_stop();
   delay(1000);
-  wlan_start(0);
+  wlan_start(m_patchReq);
 
   // create new entry for AES encryption key
   CHECK_SUCCESS(nvmem_create_entry(NVMEM_AES128_KEY_FILEID,16),
@@ -890,7 +890,7 @@ bool Adafruit_CC3000::startSmartConfig(const char *_deviceName, const char *smar
   // Reset the CC3000
   wlan_stop();
   delay(1000);
-  wlan_start(0);
+  wlan_start(m_patchReq);
   
   // Mask out all non-required events
   CHECK_SUCCESS(wlan_set_event_mask(HCI_EVNT_WLAN_KEEPALIVE |
@@ -938,13 +938,14 @@ bool Adafruit_CC3000::startSmartConfig(const char *_deviceName, const char *smar
 /**************************************************************************/
 bool Adafruit_CC3000::connectOpen(const char *ssid)
 {
-  if (!_initialised) {
+  if (m_state == AFWifiStateUninitialized) {
     return false;
   }
 
   #ifndef CC3000_TINY_DRIVER
     CHECK_SUCCESS(wlan_ioctl_set_connection_policy(0, 0, 0),
                  "Failed to set connection policy", false);
+  // TODO: get rid of these delays!
     delay(500);
     CHECK_SUCCESS(wlan_connect(WLAN_SEC_UNSEC,
           (const char*)ssid, strlen(ssid),
@@ -1027,10 +1028,6 @@ void CC3000_UsynchCallback(long lEventType, char * data, unsigned char length)
 #ifndef CC3000_TINY_DRIVER
 bool Adafruit_CC3000::connectSecure(const char *ssid, const char *key, int32_t secMode)
 {
-  if (!_initialised) {
-    return false;
-  }
-  
   if ( (secMode < 0) || (secMode > 3)) {
     CHECK_PRINTER {
       CC3KPrinter->println(F("Security mode must be between 0 and 3"));
@@ -1069,9 +1066,37 @@ bool Adafruit_CC3000::connectSecure(const char *ssid, const char *key, int32_t s
 }
 #endif
 
+void Adafruit_CC3000::setNetworkName(const char *ssid, const char *key, AFWifiSecurityMode securityMode) {
+  if (m_state != AFWifiStateUninitialized) {
+    // TODO: test stopping..
+    wlan_stop();
+    wlan_start(m_patchReq);
+  }
+  
+  if (m_ssid) {
+    free(m_ssid);
+  }
+  // We will crash if you pass NULL
+  m_ssid = (char *)malloc(sizeof(char) * strlen(ssid) + 1);
+  strcpy(m_ssid, ssid);
+  
+  if (m_password) {
+    free(m_password);
+  }
+  if (key) {
+    m_password = (char *)malloc(sizeof(char) *strlen(key) + 1);
+    strcpy(m_password, key);
+  } else {
+    m_password = NULL;
+  }
+  
+  m_secMode = securityMode;
+}
+
+
 // Connect with timeout
 bool Adafruit_CC3000::connectToAP(const char *ssid, const char *key, uint8_t secmode, uint8_t attempts) {
-  if (!_initialised) {
+  if (m_state == AFWifiStateUninitialized) {
     return false;
   }
 
@@ -1153,7 +1178,7 @@ bool Adafruit_CC3000::connectToAP(const char *ssid, const char *key, uint8_t sec
 
 #ifndef CC3000_TINY_DRIVER
 uint16_t Adafruit_CC3000::ping(uint32_t ip, uint8_t attempts, uint16_t timeout, uint8_t size) {
-  if (!_initialised) return 0;
+  if (m_state == AFWifiStateUninitialized) return 0;
   if (!cc3000Bitset.test(CC3000BitSet::IsConnected)) return 0;
   if (!cc3000Bitset.test(CC3000BitSet::HasDHCP)) return 0;
 
@@ -1193,7 +1218,7 @@ uint16_t Adafruit_CC3000::ping(uint32_t ip, uint8_t attempts, uint16_t timeout, 
 
 #ifndef CC3000_TINY_DRIVER
 uint16_t Adafruit_CC3000::getHostByName(char *hostname, uint32_t *ip) {
-  if (!_initialised) return 0;
+  if (m_state == AFWifiStateUninitialized) return 0;
   if (!cc3000Bitset.test(CC3000BitSet::IsConnected)) return 0;
   if (!cc3000Bitset.test(CC3000BitSet::HasDHCP)) return 0;
 
@@ -1239,6 +1264,142 @@ bool Adafruit_CC3000::checkSmartConfigFinished(void)
   return cc3000Bitset.test(CC3000BitSet::IsSmartConfigFinished);
 }
 
+void Adafruit_CC3000::setDNSName(const char *dnsName) {
+  if (m_dnsName) {
+    free(m_dnsName);
+    m_dnsName = NULL;
+  }
+  if (dnsName) {
+    m_dnsName = (char *)malloc(sizeof(char) *strlen(dnsName) + 1);
+    strcpy(m_dnsName, dnsName);
+  }
+}
+
+void Adafruit_CC3000::process() {
+  switch (m_state) {
+    case AFWifiStateUninitialized: {
+      // Move to the next state (begin) via a fallthrough
+      m_state = AFWifiStateBegin;
+      // no break!
+    }
+    case AFWifiStateBegin: {
+      DEBUG_PRINTLN("cc3000 begin...");
+      if (begin()) {
+        DEBUG_PRINTLN("... cc3000 done begin...");
+        // Go to the next state and fall through
+        m_state = AFWifiStateConnecting;
+        // Intentional fall through!!
+      } else {
+        DEBUG_PRINTLN("... cc3000 begin failed!!!...");
+        // wait...for what? We shouldn't have failed..
+        break;
+      }
+    }
+    case AFWifiStateConnecting: {
+      if (m_ssid == NULL) {
+        // No info...do nothing..this is a waste of cycles
+        DEBUG_PRINTF("NO SSID set! call setNetworkName(..)", m_ssid);
+        break;
+      }
+      DEBUG_PRINTF("connecting to: %s...\r\n", m_ssid);
+      // one retry attempt...
+      //            if (m_cc3000.connectToAP(WLAN_SSID, WLAN_PASS, WLAN_SECURITY, 1))
+      bool connected = false;
+      if (m_password) {
+        connected = connectSecure(m_ssid, m_password, m_secMode);
+      } else {
+        connected = connectOpen(m_ssid);
+      }
+      
+      if (connected) {
+        m_state = AFWifiStateWaitingForConnectionResponse;
+        m_lastTime = millis();
+        DEBUG_PRINTLN("...connected");
+      }
+      // always break; it needs some time
+      break;
+    }
+    case AFWifiStateWaitingForConnectionResponse: {
+      // I could throttle this...
+      if (checkConnected()) {
+        // go to the next state
+        m_state = AFWifiStateGettingDHCP;
+        m_lastTime = millis() - 1000; // try right away..
+        // fall through
+      } else {
+        if ((millis() - m_lastTime) == RESPONSE_WAITING_DURATION) {
+          // timed out.. go back to connecting
+          m_state = AFWifiStateConnecting;
+        }
+        break; // waiting..
+      }
+    }
+    case AFWifiStateGettingDHCP: {
+      // Throttle this...
+      if ((millis() - m_lastTime) < 100) {
+        break;
+      }
+      m_lastTime = millis();
+      
+      DEBUG_PRINTLN("waiting for DHCP server...");
+      if (!checkConnected()) {
+        DEBUG_PRINTLN("?? Disconnectd? try connecting again in a brief moment");
+        m_state = AFWifiStateConnecting; // next loop will connect again
+        break;
+      }
+      if (checkDHCP()) {
+        DEBUG_PRINTLN("...DHCP done.");
+//        uint32_t ipAddress, netmask, gateway, dhcpserv, dnsserv;
+//        if(getIPAddress(&ipAddress, &netmask, &gateway, &dhcpserv, &dnsserv))
+//          Serial.print(F("\nIP Addr: ")); m_cc3000.printIPdotsRev(ipAddress);
+        
+        m_state = AFWifiStateBeginDNS;
+        // Intentional fall through!!
+      } else {
+        // Give it some time...
+//        delay(100); // throttled via check at the start; avoids delays here
+        break;
+      }
+    }
+    case AFWifiStateBeginDNS: {
+      DEBUG_PRINTLN("Begin DNS setup...");
+      if (m_dnsName == NULL) {
+        m_state = AFWifiStateReady;
+        break;// don't need to doa nything
+      } else if (m_mdns.begin(m_dnsName, this)) {
+        m_mdns.update(); // do it once...
+        DEBUG_PRINTLN("...DNS ready.");
+        DEBUG_PRINTF("Server started at: %s. Waiting for connection\r\n", m_dnsName);
+        m_state = AFWifiStateReady;
+        // NO fall through
+      } else {
+        //                uint32_t ipAddress, netmask, gateway, dhcpserv, dnsserv;
+        //                if(m_cc3000.getIPAddress(&ipAddress, &netmask, &gateway, &dhcpserv, &dnsserv))
+        //                    Serial.print(F("\nIP Addr: ")); m_cc3000.printIPdotsRev(ipAddress);
+      }
+      break; // done!
+    }
+    case AFWifiStateReady: {
+      
+      // Make sure we are still connected; if not, start again...
+      if (checkConnected()) {
+        if (m_dnsName) {
+            // throttle this update
+          uint32_t now = millis();
+          if ((now - m_lastTime) >= 200) {
+            m_mdns.update();
+            m_lastTime = now;
+          }
+        }
+      } else {
+        m_state = AFWifiStateConnecting; // next loop will connect again
+      }
+      break;
+    }
+  }
+}
+
+
 #ifndef CC3000_TINY_DRIVER
 /**************************************************************************/
 /*!
@@ -1249,7 +1410,7 @@ bool Adafruit_CC3000::checkSmartConfigFinished(void)
 /**************************************************************************/
 bool Adafruit_CC3000::getIPConfig(tNetappIpconfigRetArgs *ipConfig)
 {
-  if (!_initialised)      return false;
+  if (m_state == AFWifiStateUninitialized)      return false;
   if (!cc3000Bitset.test(CC3000BitSet::IsConnected)) return false;
   if (!cc3000Bitset.test(CC3000BitSet::HasDHCP))      return false;
   
@@ -1399,7 +1560,7 @@ Adafruit_CC3000_Client::operator bool()
 
 int Adafruit_CC3000_Client::connect(const char *host, uint16_t port){
   
-  // if (!_initialised) return 0;
+//  if (m_state == AFWifiStateUninitialized) return 0;
   // if (!ulCC3000Connected) return 0;
   // if (!ulCC3000DHCP) return 0;
 
