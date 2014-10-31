@@ -30,6 +30,7 @@ License (MIT license):
 // - Multicast DNS: http://www.ietf.org/rfc/rfc6762.txt
 
 #include "CC3000_MDNS.h"
+#include "Adafruit_CC3000.h"
 
 #define READ_BUFFER_SIZE 20
 #define HEADER_SIZE 12
@@ -58,7 +59,7 @@ MDNSResponder::~MDNSResponder() {
   }
 }
 
-bool MDNSResponder::begin(const char* domain, Adafruit_CC3000& cc3000, uint32_t ttlSeconds)
+bool MDNSResponder::begin(const char* domain, Adafruit_CC3000 *cc3000, uint32_t ttlSeconds)
 { 
   // Call gethostbyname on localhost as suggested by TI to deal with firmware v1.13 issue:
   //  http://e2e.ti.com/support/wireless_connectivity/f/851/t/342177.aspx
@@ -144,7 +145,7 @@ bool MDNSResponder::begin(const char* domain, Adafruit_CC3000& cc3000, uint32_t 
   memcpy(records + A_RECORD_SIZE + 2 + TTL_OFFSET, ttl, 4);
   // Add IP address to response
   uint32_t ipAddress, netmask, gateway, dhcpserv, dnsserv;
-  if(!cc3000.getIPAddress(&ipAddress, &netmask, &gateway, &dhcpserv, &dnsserv))
+  if(!cc3000->getIPAddress(&ipAddress, &netmask, &gateway, &dhcpserv, &dnsserv))
   {
     return false;
   }
@@ -165,7 +166,7 @@ bool MDNSResponder::begin(const char* domain, Adafruit_CC3000& cc3000, uint32_t 
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_port = htons(5353);
-    address.sin_addr.s_addr = htonl(cc3000.IP2U32(224, 0, 0, 251));
+    address.sin_addr.s_addr = htonl(cc3000->IP2U32(224, 0, 0, 251));
     socklen_t len = sizeof(address);
     if (bind(soc, (sockaddr*) &address, sizeof(address)) < 0) {
       return false;
