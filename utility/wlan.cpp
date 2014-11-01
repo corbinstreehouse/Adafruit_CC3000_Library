@@ -260,7 +260,7 @@ void SpiReceiveHandler(void *pvBuffer)
 //
 //*****************************************************************************
 
-void wlan_start(UINT16 usPatchesAvailableAtHost)
+bool wlan_start_begin(UINT16 usPatchesAvailableAtHost)
 {
 
 	UINT32 ulSpiIRQState;
@@ -312,9 +312,18 @@ void wlan_start(UINT16 usPatchesAvailableAtHost)
 	// Read Buffer's size and finish
 	DEBUGPRINT_F("Read buffer\n\r");
 	hci_command_send(HCI_CMND_READ_BUFFER_SIZE, tSLInformation.pucTxCommandBuffer, 0);
-	SimpleLinkWaitEvent(HCI_CMND_READ_BUFFER_SIZE, 0);
+	tSLInformation.usRxEventOpcode = HCI_CMND_READ_BUFFER_SIZE;
 }
 
+void wlan_start(UINT16 usPatchesAvailableAtHost) {
+    wlan_start_begin(usPatchesAvailableAtHost);
+	hci_event_handler(0, 0, 0);
+}
+
+bool wlan_start_non_blocking(UINT16 usPatchesAvailableAtHost) {
+    wlan_start_begin(usPatchesAvailableAtHost);
+	return hci_event_handler_non_blocking(0, 0, 0);
+}
 
 //*****************************************************************************
 //
@@ -382,15 +391,12 @@ void wlan_stop(void)
 //*****************************************************************************
 
 #ifndef CC3000_TINY_DRIVER
-INT32 wlan_connect(UINT32 ulSecType, const CHAR *ssid, INT32 ssid_len,
-             UINT8 *bssid, UINT8 *key, INT32 key_len)
+INT32 wlan_connect_internal_start(UINT32 ulSecType, const CHAR *ssid, INT32 ssid_len, UINT8 *bssid, UINT8 *key, INT32 key_len)
 {
-	INT32 ret;
 	UINT8 *ptr;
 	UINT8 *args;
 	UINT8 bssid_zero[] = {0, 0, 0, 0, 0, 0};
 
-	ret  	= EFAIL;
 	ptr  	= tSLInformation.pucTxCommandBuffer;
 	args 	= (ptr + HEADERS_SIZE_CMD);
 
@@ -420,15 +426,31 @@ INT32 wlan_connect(UINT32 ulSecType, const CHAR *ssid, INT32 ssid_len,
 	}
 
 	// Initiate a HCI command
-	hci_command_send(HCI_CMND_WLAN_CONNECT, ptr, WLAN_CONNECT_PARAM_LEN +
-									 ssid_len + key_len - 1);
+	hci_command_send(HCI_CMND_WLAN_CONNECT, ptr, WLAN_CONNECT_PARAM_LEN + ssid_len + key_len - 1);
+}
 
+INT32 wlan_connect(UINT32 ulSecType, const CHAR *ssid, INT32 ssid_len, UINT8 *bssid, UINT8 *key, INT32 key_len) {
+	INT32 ret = EFAIL;
+    wlan_connect_internal_start(ulSecType, ssid, ssid_len, bssid, key, key_len);
 	// Wait for command complete event
 	SimpleLinkWaitEvent(HCI_CMND_WLAN_CONNECT, &ret);
 	errno = ret;
-
+    
 	return(ret);
 }
+
+// we have to use global state
+bool wlan_connect_start(UINT32 ulSecType, const CHAR *ssid, INT32 ssid_len, UINT8 *bssid, UINT8 *key, INT32 key_len, INT32 *res) {
+    wlan_connect_internal_start(ulSecType, ssid, ssid_len, bssid, key, key_len);
+    return start_event_non_blocking(HCI_CMND_WLAN_CONNECT, res);
+    
+}
+
+bool wlan_event_check_with_result(void *pRetParams) {
+    return process_event_handler_non_blocking(pRetParams);
+}
+
+
 #else
 INT32 wlan_connect(const CHAR *ssid, INT32 ssid_len)
 {
@@ -738,27 +760,32 @@ INT32 wlan_add_profile(UINT32 ulSecType,
 //
 //*****************************************************************************
 
-INT32 wlan_ioctl_del_profile(UINT32 ulIndex)
+void wlan_ioctl_del_profile_non_blocking(UINT32 ulIndex)
 {
-	INT32 ret;
 	UINT8 *ptr;
 	UINT8 *args;
-
+    
 	ptr = tSLInformation.pucTxCommandBuffer;
 	args = (UINT8 *)(ptr + HEADERS_SIZE_CMD);
-
+    
 	// Fill in HCI packet structure
 	args = UINT32_TO_STREAM(args, ulIndex);
-	ret = EFAIL;
-
+    
 	// Initiate a HCI command
 	hci_command_send(HCI_CMND_WLAN_IOCTL_DEL_PROFILE,
-									 ptr, WLAN_DEL_PROFILE_PARAMS_LEN);
-
+                     ptr, WLAN_DEL_PROFILE_PARAMS_LEN);
+    
 	// Wait for command complete event
-	SimpleLinkWaitEvent(HCI_CMND_WLAN_IOCTL_DEL_PROFILE, &ret);
+//	SimpleLinkWaitEvent(HCI_CMND_WLAN_IOCTL_DEL_PROFILE, &ret);
+    tSLInformation.usRxEventOpcode = HCI_CMND_WLAN_IOCTL_DEL_PROFILE;
+}
 
-	return(ret);
+INT32 wlan_ioctl_del_profile(UINT32 ulIndex)
+{
+	INT32 ret = EFAIL;
+    wlan_ioctl_del_profile_non_blocking(ulIndex);
+    hci_event_handler(&ret, 0, 0);
+	return ret;
 }
 
 //*****************************************************************************

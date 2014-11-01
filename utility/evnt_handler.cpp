@@ -232,8 +232,7 @@ void hci_unsol_handle_patch_request(CHAR *event_hdr)
 //
 //*****************************************************************************
 
-
-UINT8 * hci_event_handler(void *pRetParams, UINT8 *from, UINT8 *fromlen)
+bool hci_event_handler_inner_loop(void *pRetParams, UINT8 *from, UINT8 *fromlen)
 {
 	UINT8 *pucReceivedData, ucArgsize;
 	UINT16 usLength;
@@ -243,7 +242,7 @@ UINT8 * hci_event_handler(void *pRetParams, UINT8 *from, UINT8 *fromlen)
 	UINT8 * RecvParams;
 	UINT8 *RetParams;
 
-
+    // returns true when it is done
 	while (1)
 	{
 		cc3k_int_poll();
@@ -491,12 +490,29 @@ UINT8 * hci_event_handler(void *pRetParams, UINT8 *from, UINT8 *fromlen)
 
 			if ((tSLInformation.usRxEventOpcode == 0) && (tSLInformation.usRxDataPending == 0))
 			{
-				return NULL;
+				return true; // done..
 			}
 		}
+        return false; // not done....
 	}
-
+    return true; // Done because we broke out somehow...
 }
+
+void hci_event_handler(void *pRetParams, UINT8 *from, UINT8 *fromlen)
+{
+    while (1) {
+        if (hci_event_handler_inner_loop(pRetParams, from, fromlen)) {
+            break;
+        }
+    }
+}
+
+// returns YES when done...
+bool hci_event_handler_non_blocking(void *pRetParams, UINT8 *from, UINT8 *fromlen) {
+    return hci_event_handler_inner_loop(pRetParams, from, fromlen);
+}
+
+
 
 //*****************************************************************************
 //
@@ -841,6 +857,18 @@ void SimpleLinkWaitEvent(UINT16 usOpcode, void *pRetParams)
 	tSLInformation.usRxEventOpcode = usOpcode;
 	hci_event_handler(pRetParams, 0, 0);
 }
+
+// returns true when done
+bool start_event_non_blocking(UINT16 usOpcode, void *pRetParams)
+{
+	tSLInformation.usRxEventOpcode = usOpcode;
+    return hci_event_handler_non_blocking(pRetParams, 0, 0);
+}
+
+bool process_event_handler_non_blocking(void *pRetParams) {
+    return hci_event_handler_non_blocking(pRetParams, 0, 0);
+}
+
 
 //*****************************************************************************
 //

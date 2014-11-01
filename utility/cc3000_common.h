@@ -254,6 +254,11 @@ extern volatile sSimplLinkInformation tSLInformation;
 
 extern void SimpleLinkWaitEvent(UINT16 usOpcode, void *pRetParams);
 
+// non blocking versions you have to check each loop
+extern bool start_event_non_blocking(UINT16 usOpcode, void *pRetParams);
+extern bool process_event_handler_non_blocking(void *pRetParams);
+
+    
 //*****************************************************************************
 //
 //!  SimpleLinkWaitData

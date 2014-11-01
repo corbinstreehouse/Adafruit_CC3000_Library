@@ -158,6 +158,7 @@ extern void wlan_init(		tWlanCB	 	sWlanCB,
 //
 //*****************************************************************************
 extern void wlan_start(UINT16 usPatchesAvailableAtHost);
+extern bool wlan_start_non_blocking(UINT16 usPatchesAvailableAtHost); // returns YES when done. Otherwise, call wlan_connect_check() ??
 
 //*****************************************************************************
 //
@@ -205,8 +206,13 @@ extern void wlan_stop(void);
 //
 //*****************************************************************************
 #ifndef CC3000_TINY_DRIVER
-extern INT32 wlan_connect(UINT32 ulSecType, const CHAR *ssid, INT32 ssid_len,
-                        UINT8 *bssid, UINT8 *key, INT32 key_len);
+extern INT32 wlan_connect(UINT32 ulSecType, const CHAR *ssid, INT32 ssid_len, UINT8 *bssid, UINT8 *key, INT32 key_len);
+
+
+// returns true if it was done and returned a valid result. Otherwise you MUST call wlan_event_check_with_result
+bool wlan_connect_start(UINT32 ulSecType, const CHAR *ssid, INT32 ssid_len, UINT8 *bssid, UINT8 *key, INT32 key_len, INT32 *result);
+bool wlan_event_check_with_result(void *pRetParams);
+
 #else
 extern INT32 wlan_connect(const CHAR *ssid, INT32 ssid_len);
 
@@ -283,6 +289,8 @@ extern INT32 wlan_add_profile(UINT32 ulSecType, UINT8* ucSsid,
 //
 //*****************************************************************************
 extern INT32 wlan_ioctl_del_profile(UINT32 ulIndex);
+extern void wlan_ioctl_del_profile_non_blocking(UINT32 ulIndex);
+
 
 //*****************************************************************************
 //

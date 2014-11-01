@@ -238,6 +238,28 @@ Adafruit_CC3000::Adafruit_CC3000(uint8_t csPin, uint8_t irqPin, uint8_t vbatPin,
 /*                                                                         */
 /* *********************************************************************** */
 
+
+static inline bool setupIRQ() {
+#ifndef CORE_ADAX
+  // determine irq #
+  for (uint8_t i=0; i<sizeof(dreqinttable); i+=2) {
+    if (g_irqPin == dreqinttable[i]) {
+      g_IRQnum = dreqinttable[i+1];
+    }
+  }
+  if (g_IRQnum == 0xFF) {
+    CHECK_PRINTER {
+      CC3KPrinter->println(F("IRQ pin is not an INT pin!"));
+    }
+    return false;
+  }
+#else
+  g_IRQnum = g_irqPin;
+  // (almost) every single pin on Xmega supports interrupt
+#endif
+  return true;
+}
+
 /**************************************************************************/
 /*!
     @brief  Setups the HW
@@ -252,106 +274,69 @@ Adafruit_CC3000::Adafruit_CC3000(uint8_t csPin, uint8_t irqPin, uint8_t vbatPin,
               clean connection
 */
 /**************************************************************************/
-bool Adafruit_CC3000::begin(bool useSmartConfigData, const char *_deviceName)
-{
-  // We are done once we are past the begin state
-  if (m_state > AFWifiStateBegin) return true;
-
-  #ifndef CORE_ADAX
-  // determine irq #
-  for (uint8_t i=0; i<sizeof(dreqinttable); i+=2) {
-    if (g_irqPin == dreqinttable[i]) {
-      g_IRQnum = dreqinttable[i+1];
-    }
-  }
-  if (g_IRQnum == 0xFF) {
-    CHECK_PRINTER {
-      CC3KPrinter->println(F("IRQ pin is not an INT pin!"));
-    }
-    return false;
-  }
-  #else
-  g_IRQnum = g_irqPin;
-  // (almost) every single pin on Xmega supports interrupt
-  #endif
-
-  init_spi();
-  
-  DEBUGPRINT_F("init\n\r");
-  wlan_init(CC3000_UsynchCallback,
-            sendWLFWPatch, sendDriverPatch, sendBootLoaderPatch,
-            ReadWlanInterruptPin,
-            WlanInterruptEnable,
-            WlanInterruptDisable,
-            WriteWlanPin);
-  DEBUGPRINT_F("start\n\r");
-
-  wlan_start(m_patchReq);
-  
-  DEBUGPRINT_F("ioctl\n\r");
-  // Check if we should erase previous stored connection details
-  // (most likely written with data from the SmartConfig app)
-  if (!useSmartConfigData)
-  {
-    // Manual connection only (no auto, profiles, etc.)
-    wlan_ioctl_set_connection_policy(0, 0, 0);
-    // Delete previous profiles from memory
-    wlan_ioctl_del_profile(255);
-  }
-  else
-  {
-    // Auto Connect - the C3000 device tries to connect to any AP it detects during scanning:
-    // wlan_ioctl_set_connection_policy(1, 0, 0)
-    
-    // Fast Connect - the CC3000 device tries to reconnect to the last AP connected to:
-    // wlan_ioctl_set_connection_policy(0, 1, 0)
-
-    // Use Profiles - the CC3000 device tries to connect to an AP from profiles:
-    wlan_ioctl_set_connection_policy(0, 0, 1);
-  }
-
-  CHECK_SUCCESS(
-    wlan_set_event_mask(HCI_EVNT_WLAN_UNSOL_INIT        |
-                        //HCI_EVNT_WLAN_ASYNC_PING_REPORT |// we want ping reports
-                        //HCI_EVNT_BSD_TCP_CLOSE_WAIT |
-                        //HCI_EVNT_WLAN_TX_COMPLETE |
-                        HCI_EVNT_WLAN_KEEPALIVE),
-                        "WLAN Set Event Mask FAIL", false);
-
-  // Wait for re-connection if we're using SmartConfig data
-  // TODO: re-enable smart config...if i want
-  /*
-   
-  if (useSmartConfigData)
-  {
-    // TODO: update m_state
-    // Wait for a connection
-    uint32_t timeout = 0;
-    while(!cc3000Bitset.test(CC3000BitSet::IsConnected))
-    {
-      cc3k_int_poll();
-      if(timeout > WLAN_CONNECT_TIMEOUT)
-      {
-        CHECK_PRINTER {
-          CC3KPrinter->println(F("Timed out using SmartConfig data"));
-        }
-        return false;
-      }
-      timeout += 10;
-      delay(10);
-    }
-    
-    // TODO: corbin, state machine..
-    delay(1000);  
-    if (cc3000Bitset.test(CC3000BitSet::HasDHCP))
-    {
-      mdnsAdvertiser(1, (char *) _deviceName, strlen(_deviceName));
-    }
-  }
-   */
-    
-  return true;
-}
+//bool Adafruit_CC3000::begin(bool useSmartConfigData, const char *_deviceName)
+//{
+//  DEBUGPRINT_F("ioctl\n\r");
+//  // Check if we should erase previous stored connection details
+//  // (most likely written with data from the SmartConfig app)
+//  if (!useSmartConfigData)
+//  {
+//
+//  }
+//  else
+//  {
+//    // Auto Connect - the C3000 device tries to connect to any AP it detects during scanning:
+//    // wlan_ioctl_set_connection_policy(1, 0, 0)
+//    
+//    // Fast Connect - the CC3000 device tries to reconnect to the last AP connected to:
+//    // wlan_ioctl_set_connection_policy(0, 1, 0)
+//
+//    // Use Profiles - the CC3000 device tries to connect to an AP from profiles:
+//    wlan_ioctl_set_connection_policy(0, 0, 1);
+//    CHECK_SUCCESS(
+//                  wlan_set_event_mask(HCI_EVNT_WLAN_UNSOL_INIT        |
+//                                      //HCI_EVNT_WLAN_ASYNC_PING_REPORT |// we want ping reports
+//                                      //HCI_EVNT_BSD_TCP_CLOSE_WAIT |
+//                                      //HCI_EVNT_WLAN_TX_COMPLETE |
+//                                      HCI_EVNT_WLAN_KEEPALIVE),
+//                  "WLAN Set Event Mask FAIL", false);  }
+//
+//
+//
+//  // Wait for re-connection if we're using SmartConfig data
+//  // TODO: re-enable smart config...if i want
+//  /*
+//   
+//  if (useSmartConfigData)
+//  {
+//    // TODO: update m_state
+//    // Wait for a connection
+//    uint32_t timeout = 0;
+//    while(!cc3000Bitset.test(CC3000BitSet::IsConnected))
+//    {
+//      cc3k_int_poll();
+//      if(timeout > WLAN_CONNECT_TIMEOUT)
+//      {
+//        CHECK_PRINTER {
+//          CC3KPrinter->println(F("Timed out using SmartConfig data"));
+//        }
+//        return false;
+//      }
+//      timeout += 10;
+//      delay(10);
+//    }
+//    
+//    // TODO: corbin, state machine..
+//    delay(1000);  
+//    if (cc3000Bitset.test(CC3000BitSet::HasDHCP))
+//    {
+//      mdnsAdvertiser(1, (char *) _deviceName, strlen(_deviceName));
+//    }
+//  }
+//   */
+//    
+//  return true;
+//}
 
 /**************************************************************************/
 /*!
@@ -947,10 +932,7 @@ bool Adafruit_CC3000::connectOpen(const char *ssid)
                  "Failed to set connection policy", false);
   // TODO: get rid of these delays!
     delay(500);
-    CHECK_SUCCESS(wlan_connect(WLAN_SEC_UNSEC,
-          (const char*)ssid, strlen(ssid),
-          0 ,NULL,0),
-          "SSID connection failed", false);
+    CHECK_SUCCESS(wlan_connect(WLAN_SEC_UNSEC, (const char*)ssid, strlen(ssid), 0 ,NULL,0), "SSID connection failed", false);
   #else
     wlan_connect(ssid, strlen(ssid));
   #endif
@@ -1026,16 +1008,16 @@ void CC3000_UsynchCallback(long lEventType, char * data, unsigned char length)
 */
 /**************************************************************************/
 #ifndef CC3000_TINY_DRIVER
-bool Adafruit_CC3000::connectSecure(const char *ssid, const char *key, int32_t secMode)
+bool Adafruit_CC3000::startConnectPolicy()
 {
-  if ( (secMode < 0) || (secMode > 3)) {
+  if ( (m_secMode < 0) || (m_secMode > 3)) {
     CHECK_PRINTER {
       CC3KPrinter->println(F("Security mode must be between 0 and 3"));
     }
     return false;
   }
 
-  if (strlen(ssid) > MAXSSID) {
+  if (strlen(m_ssid) > MAXSSID) {
     CHECK_PRINTER {
       CC3KPrinter->print(F("SSID length must be < "));
       CC3KPrinter->println(MAXSSID);
@@ -1043,7 +1025,7 @@ bool Adafruit_CC3000::connectSecure(const char *ssid, const char *key, int32_t s
     return false;
   }
 
-  if (strlen(key) > MAXLENGTHKEY) {
+  if (m_password == NULL || strlen(m_password) > MAXLENGTHKEY) {
     CHECK_PRINTER {
       CC3KPrinter->print(F("Key length must be < "));
       CC3KPrinter->println(MAXLENGTHKEY);
@@ -1054,17 +1036,21 @@ bool Adafruit_CC3000::connectSecure(const char *ssid, const char *key, int32_t s
   CHECK_SUCCESS(wlan_ioctl_set_connection_policy(0, 0, 0),
                 "Failed setting the connection policy",
                 false);
-  delay(100); // corbin: was 500, I lowered it. A delay without any comments...bad programmer!
-  CHECK_SUCCESS(wlan_connect(secMode, (char *)ssid, strlen(ssid),
-                             NULL,
-                             (unsigned char *)key, strlen(key)),
-                "SSID connection failed", false);
-
-  /* Wait for 'HCI_EVNT_WLAN_UNSOL_CONNECT' in CC3000_UsynchCallback */
-
+  
+  
   return true;
 }
 #endif
+
+bool Adafruit_CC3000::doWlanConnectSecure() {
+  if (wlan_connect(m_secMode, (char *)m_ssid, strlen(m_ssid), NULL, (unsigned char *)m_password, strlen(m_password)) == CC3000_SUCCESS) {
+    /* Wait for 'HCI_EVNT_WLAN_UNSOL_CONNECT' in CC3000_UsynchCallback */
+    return true;
+  } else {
+    // log why failed?
+    return false;
+  }
+}
 
 void Adafruit_CC3000::setNetworkName(const char *ssid, const char *key, AFWifiSecurityMode securityMode) {
   if (m_state != AFWifiStateUninitialized) {
@@ -1144,11 +1130,17 @@ bool Adafruit_CC3000::connectToAP(const char *ssid, const char *key, uint8_t sec
       /* NOTE: Secure connections are not available in 'Tiny' mode! */
 #ifndef CC3000_TINY_DRIVER
       /* Connect to a secure network using WPA2, etc */
-      if (! connectSecure(ssid, key, secmode)) {
+      if (startConnectPolicy()) {
+        delay(500); //  lame delays
+        if (!doWlanConnectSecure()) {
+          CHECK_PRINTER {
+            CC3KPrinter->println(F("Failed!"));
+          }
+        }
+      } else {
         CHECK_PRINTER {
           CC3KPrinter->println(F("Failed!"));
         }
-        continue;
       }
 #endif
     }
@@ -1279,49 +1271,130 @@ void Adafruit_CC3000::process() {
   switch (m_state) {
     case AFWifiStateUninitialized: {
       // Move to the next state (begin) via a fallthrough
-      m_state = AFWifiStateBegin;
-      // no break!
+      m_state = AFWifiStateInit;
+      // Fall to AFWifiStateInit
     }
-    case AFWifiStateBegin: {
-      DEBUG_PRINTLN("cc3000 begin...");
-      if (begin()) {
-        DEBUG_PRINTLN("... cc3000 done begin...");
-        // Go to the next state and fall through
-        m_state = AFWifiStateConnecting;
-        // Intentional fall through!!
+    case AFWifiStateInit: {
+      // Do the pretty fast synchronous stuff
+      setupIRQ();
+      init_spi();
+      DEBUGPRINT_F("init\n\r");
+      wlan_init(CC3000_UsynchCallback, sendWLFWPatch, sendDriverPatch, sendBootLoaderPatch, ReadWlanInterruptPin, WlanInterruptEnable, WlanInterruptDisable, WriteWlanPin);
+      DEBUGPRINT_F("start\n\r");
+      
+      Serial.println("start");
+      // wlan_start is slow...
+      if (wlan_start_non_blocking(m_patchReq)) {
+        Serial.println("startend");
+        m_state = AFWifiStateSetPolicy;
       } else {
-        DEBUG_PRINTLN("... cc3000 begin failed!!!...");
-        // wait...for what? We shouldn't have failed..
-        break;
+        // wait
+        m_state = AFWifiStateStartWait;
+      }
+      break;
+    }
+    case AFWifiStateStartWait: {
+      if (wlan_event_check_with_result(NULL)) {
+        Serial.println("startend2");
+        // go to the next state, fall through
+        m_state = AFWifiStateSetPolicy;
+      } else {
+        break; // still waiting...
       }
     }
+      
+    case AFWifiStateSetPolicy: {
+      Serial.println("set policty");
+      wlan_ioctl_set_connection_policy(0, 0, 0); // synchrous (enough..)
+      // TODO 100ms delay???
+      Serial.println("set policty end, del profile start");
+      wlan_ioctl_del_profile_non_blocking(255);
+      m_state = AFWifiStateDeleteProfileWait;
+      break;
+    }
+    case AFWifiStateDeleteProfileWait: {
+      DEBUG_PRINTLN("del wait");
+      INT32 res = EFAIL;
+      if (wlan_event_check_with_result(&res)) {
+        // go to the next state, fall through
+        m_state = AFWifiStateSetEventMask;
+      } else {
+        // waiting
+      }
+      break;
+    }
+    case AFWifiStateSetEventMask: {
+      DEBUG_PRINTLN("set event mask");
+      wlan_set_event_mask(HCI_EVNT_WLAN_UNSOL_INIT        |
+                          //HCI_EVNT_WLAN_ASYNC_PING_REPORT |// we want ping reports
+                          //HCI_EVNT_BSD_TCP_CLOSE_WAIT |
+                          //HCI_EVNT_WLAN_TX_COMPLETE |
+                          HCI_EVNT_WLAN_KEEPALIVE);
+      
+      m_state = AFWifiStateConnecting;  // wait..this is already done earlier??
+      m_lastTime = millis();
+      break;
+    }
+      
     case AFWifiStateConnecting: {
       if (m_ssid == NULL) {
         // No info...do nothing..this is a waste of cycles
         DEBUG_PRINTF("NO SSID set! call setNetworkName(..)", m_ssid);
         break;
       }
+      // make sure enough time passed (give it 100ms)
+      if (millis() - m_lastTime < 100) {
+        break;
+      }
+      
       DEBUG_PRINTF("connecting to: %s...\r\n", m_ssid);
       // one retry attempt...
       //            if (m_cc3000.connectToAP(WLAN_SSID, WLAN_PASS, WLAN_SECURITY, 1))
       bool connected = false;
       if (m_password) {
-        connected = connectSecure(m_ssid, m_password, m_secMode);
+        INT32 res = EFAIL;
+        DEBUG_PRINTF("walling wlan_connect_start secure...: %s...\r\n", m_ssid);
+        if (wlan_connect_start(m_secMode, (char *)m_ssid, strlen(m_ssid), NULL, (unsigned char *)m_password, strlen(m_password), &res)) {
+          // Go to the next state...
+          m_state = AFWifiStateWaitingForConnectionResponse;
+          m_lastTime = millis();
+        } else {
+          m_state = AFWifiStateConnectWaiting;
+        }
       } else {
-        connected = connectOpen(m_ssid);
-      }
-      
-      if (connected) {
-        m_state = AFWifiStateWaitingForConnectionResponse;
-        m_lastTime = millis();
-        DEBUG_PRINTLN("...connected");
+        if (connectOpen(m_ssid)) {
+          m_state = AFWifiStateWaitingForConnectionResponse;
+          m_lastTime = millis();
+        } else {
+          // try connecting again... I guess
+        }
       }
       // always break; it needs some time
       break;
     }
+    case AFWifiStateConnectWaiting: {
+      DEBUG_PRINTLN("AFWifiStateConnectWaiting");
+      INT32 res = EFAIL;
+      if (wlan_event_check_with_result(&res)) {
+        DEBUG_PRINTLN("DONE: AFWifiStateConnectWaiting");
+        if (res == CC3000_SUCCESS) {
+          // done!
+          m_state = AFWifiStateWaitingForConnectionResponse;
+          m_lastTime = millis();
+        } else {
+          DEBUG_PRINTLN("error..start again");
+
+          // error; start over
+          m_state = AFWifiStateConnecting;
+        }
+      }
+      break;
+    }
     case AFWifiStateWaitingForConnectionResponse: {
+      DEBUG_PRINTLN("AFWifiStateWaitingForConnectionResponse");
       // I could throttle this...
       if (checkConnected()) {
+        DEBUG_PRINTLN("connected");
         // go to the next state
         m_state = AFWifiStateGettingDHCP;
         m_lastTime = millis() - 1000; // try right away..
@@ -1337,6 +1410,7 @@ void Adafruit_CC3000::process() {
     case AFWifiStateGettingDHCP: {
       // Throttle this...
       if ((millis() - m_lastTime) < 100) {
+        DEBUG_PRINTLN("dhcp throttled ");
         break;
       }
       m_lastTime = millis();
@@ -1349,15 +1423,24 @@ void Adafruit_CC3000::process() {
       }
       if (checkDHCP()) {
         DEBUG_PRINTLN("...DHCP done.");
-//        uint32_t ipAddress, netmask, gateway, dhcpserv, dnsserv;
-//        if(getIPAddress(&ipAddress, &netmask, &gateway, &dhcpserv, &dnsserv))
-//          Serial.print(F("\nIP Addr: ")); m_cc3000.printIPdotsRev(ipAddress);
+        
+        
+#if DEBUG
+        uint32_t ipAddress, netmask, gateway, dhcpserv, dnsserv;
+        if(getIPAddress(&ipAddress, &netmask, &gateway, &dhcpserv, &dnsserv)) {
+          Serial.print(F("\nIP Addr: "));
+          printIPdotsRev(ipAddress);
+          Serial.println();
+        } else {
+          Serial.println("!!!!!!!couldn't get ip...");
+        }
+#endif
         
         m_state = AFWifiStateBeginDNS;
         // Intentional fall through!!
       } else {
         // Give it some time...
-//        delay(100); // throttled via check at the start; avoids delays here
+        //        delay(100); // throttled via check at the start; avoids delays here
         break;
       }
     }
@@ -1373,9 +1456,8 @@ void Adafruit_CC3000::process() {
         m_state = AFWifiStateReady;
         // NO fall through
       } else {
-        //                uint32_t ipAddress, netmask, gateway, dhcpserv, dnsserv;
-        //                if(m_cc3000.getIPAddress(&ipAddress, &netmask, &gateway, &dhcpserv, &dnsserv))
-        //                    Serial.print(F("\nIP Addr: ")); m_cc3000.printIPdotsRev(ipAddress);
+        // just waiting...
+      
       }
       break; // done!
     }
@@ -1384,7 +1466,7 @@ void Adafruit_CC3000::process() {
       // Make sure we are still connected; if not, start again...
       if (checkConnected()) {
         if (m_dnsName) {
-            // throttle this update
+          // throttle this update
           uint32_t now = millis();
           if ((now - m_lastTime) >= 200) {
             m_mdns.update();
@@ -1392,6 +1474,8 @@ void Adafruit_CC3000::process() {
           }
         }
       } else {
+        DEBUG_PRINTLN("CONNECTION DROPPED!!.");
+
         m_state = AFWifiStateConnecting; // next loop will connect again
       }
       break;

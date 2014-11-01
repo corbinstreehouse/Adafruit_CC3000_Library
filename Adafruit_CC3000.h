@@ -132,8 +132,13 @@ class Adafruit_CC3000_Client : public Client {
 // A simple state machine to automatically connect/reconnect and update the DNS
 enum AFWifiState {
     AFWifiStateUninitialized,
-    AFWifiStateBegin,
+    AFWifiStateInit,
+    AFWifiStateStartWait,
+    AFWifiStateDeleteProfileWait,
+    AFWifiStateSetEventMask,
+    AFWifiStateSetPolicy,
     AFWifiStateConnecting,
+    AFWifiStateConnectWaiting,
     AFWifiStateWaitingForConnectionResponse,
     AFWifiStateGettingDHCP,
     AFWifiStateBeginDNS,
@@ -218,12 +223,14 @@ class Adafruit_CC3000 {
 
   private:
     // TODO: smart config option
-    bool     begin(bool useSmartConfigData = false, const char *_deviceName = NULL);
+//    bool     begin(bool useSmartConfigData = false, const char *_deviceName = NULL);
 
     // now these are async. strings are NOT copied, so you must keep them alive outside of this class
     bool     connectToAP(const char *ssid, const char *key, uint8_t secmode, uint8_t attempts = 0);
-    bool     connectSecure(const char *ssid, const char *key, int32_t secMode);
+    bool     connectSecure();
     bool     connectOpen(const char *ssid);
+    bool startConnectPolicy();
+    bool doWlanConnectSecure();
     
     AFWifiState m_state;
     MDNSResponder m_mdns; // wait, do I need this? Or can i pass _deviceName?

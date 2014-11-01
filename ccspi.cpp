@@ -243,7 +243,7 @@ int init_spi(void)
   /* Set POWER_EN pin to output and disable the CC3000 by default */
   pinMode(g_vbatPin, OUTPUT);
   digitalWrite(g_vbatPin, 0);
-  delay(500);
+//  delay(500); // Why did this delay?
 
   /* Set CS pin to output (don't de-assert yet) */
   pinMode(g_csPin, OUTPUT);
