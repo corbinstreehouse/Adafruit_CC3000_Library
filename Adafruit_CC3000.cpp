@@ -1282,10 +1282,8 @@ void Adafruit_CC3000::process() {
       wlan_init(CC3000_UsynchCallback, sendWLFWPatch, sendDriverPatch, sendBootLoaderPatch, ReadWlanInterruptPin, WlanInterruptEnable, WlanInterruptDisable, WriteWlanPin);
       DEBUGPRINT_F("start\n\r");
       
-      Serial.println("start");
-      // wlan_start is slow...
+      // wlan_start is slow...so i now have a non blocking version
       if (wlan_start_non_blocking(m_patchReq)) {
-        Serial.println("startend");
         m_state = AFWifiStateSetPolicy;
       } else {
         // wait
@@ -1295,7 +1293,7 @@ void Adafruit_CC3000::process() {
     }
     case AFWifiStateStartWait: {
       if (wlan_event_check_with_result(NULL)) {
-        Serial.println("startend2");
+//        Serial.println("startend2");
         // go to the next state, fall through
         m_state = AFWifiStateSetPolicy;
       } else {
@@ -1304,10 +1302,10 @@ void Adafruit_CC3000::process() {
     }
       
     case AFWifiStateSetPolicy: {
-      Serial.println("set policty");
+//      Serial.println("set policty");
       wlan_ioctl_set_connection_policy(0, 0, 0); // synchrous (enough..)
       // TODO 100ms delay???
-      Serial.println("set policty end, del profile start");
+//      Serial.println("set policty end, del profile start");
       wlan_ioctl_del_profile_non_blocking(255);
       m_state = AFWifiStateDeleteProfileWait;
       break;
@@ -1347,46 +1345,48 @@ void Adafruit_CC3000::process() {
         break;
       }
       
+      m_lastTime = millis();
       DEBUG_PRINTF("connecting to: %s...\r\n", m_ssid);
       // one retry attempt...
       //            if (m_cc3000.connectToAP(WLAN_SSID, WLAN_PASS, WLAN_SECURITY, 1))
       bool connected = false;
       if (m_password) {
         INT32 res = EFAIL;
-        DEBUG_PRINTF("walling wlan_connect_start secure...: %s...\r\n", m_ssid);
+        DEBUG_PRINTF("calling wlan_connect_start secure...: %s...\r\n", m_ssid);
         if (wlan_connect_start(m_secMode, (char *)m_ssid, strlen(m_ssid), NULL, (unsigned char *)m_password, strlen(m_password), &res)) {
           // Go to the next state...
           m_state = AFWifiStateWaitingForConnectionResponse;
-          m_lastTime = millis();
         } else {
           m_state = AFWifiStateConnectWaiting;
         }
       } else {
+        // synchronous..doh...
         if (connectOpen(m_ssid)) {
           m_state = AFWifiStateWaitingForConnectionResponse;
-          m_lastTime = millis();
         } else {
-          // try connecting again... I guess
+          // timed out
+          m_state = AFWifiStateTimedOut;
         }
       }
       // always break; it needs some time
       break;
     }
     case AFWifiStateConnectWaiting: {
-      DEBUG_PRINTLN("AFWifiStateConnectWaiting");
+//      DEBUG_PRINTLN("AFWifiStateConnectWaiting");
       INT32 res = EFAIL;
       if (wlan_event_check_with_result(&res)) {
         DEBUG_PRINTLN("DONE: AFWifiStateConnectWaiting");
+        m_lastTime = millis();
         if (res == CC3000_SUCCESS) {
           // done!
           m_state = AFWifiStateWaitingForConnectionResponse;
-          m_lastTime = millis();
         } else {
           DEBUG_PRINTLN("error..start again");
-
-          // error; start over
+          // error; start over...I think....
           m_state = AFWifiStateConnecting;
         }
+      } else if ((millis() - m_lastTime) >= WLAN_CONNECT_TIMEOUT) {
+        m_state = AFWifiStateTimedOut;
       }
       break;
     }
@@ -1397,34 +1397,29 @@ void Adafruit_CC3000::process() {
         DEBUG_PRINTLN("connected");
         // go to the next state
         m_state = AFWifiStateGettingDHCP;
-        m_lastTime = millis() - 1000; // try right away..
-        // fall through
+        m_lastTime = millis();
       } else {
-        if ((millis() - m_lastTime) == RESPONSE_WAITING_DURATION) {
-          // timed out.. go back to connecting
-          m_state = AFWifiStateConnecting;
+        if ((millis() - m_lastTime) >= WLAN_CONNECT_TIMEOUT) {
+          m_state = AFWifiStateTimedOut;
         }
-        break; // waiting..
       }
+      break; // waiting..
     }
     case AFWifiStateGettingDHCP: {
-      // Throttle this...
-      if ((millis() - m_lastTime) < 100) {
-        DEBUG_PRINTLN("dhcp throttled ");
-        break;
-      }
-      m_lastTime = millis();
-      
-      DEBUG_PRINTLN("waiting for DHCP server...");
+      // Throttle this.....but now i use it for a timeout...
+//      if ((millis() - m_lastTime) < 100) {
+//        DEBUG_PRINTLN("dhcp throttled ");
+//        break;
+//      }
+//      m_lastTime = millis();
+  
+//      DEBUG_PRINTLN("waiting for DHCP server...");
       if (!checkConnected()) {
         DEBUG_PRINTLN("?? Disconnectd? try connecting again in a brief moment");
-        m_state = AFWifiStateConnecting; // next loop will connect again
-        break;
-      }
-      if (checkDHCP()) {
+        m_state = AFWifiStateTimedOut; // next loop will connect again
+        
+      } else if (checkDHCP()) {
         DEBUG_PRINTLN("...DHCP done.");
-        
-        
 #if DEBUG
         uint32_t ipAddress, netmask, gateway, dhcpserv, dnsserv;
         if(getIPAddress(&ipAddress, &netmask, &gateway, &dhcpserv, &dnsserv)) {
@@ -1435,30 +1430,35 @@ void Adafruit_CC3000::process() {
           Serial.println("!!!!!!!couldn't get ip...");
         }
 #endif
-        
+        m_lastTime = millis();
         m_state = AFWifiStateBeginDNS;
-        // Intentional fall through!!
+      } else if ((millis() - m_lastTime) == WLAN_CONNECT_TIMEOUT) {
+        m_state = AFWifiStateTimedOut;
       } else {
-        // Give it some time...
-        //        delay(100); // throttled via check at the start; avoids delays here
-        break;
+        // wait...
+//        delay(10); // delays..delays...
       }
+      break;
     }
     case AFWifiStateBeginDNS: {
       DEBUG_PRINTLN("Begin DNS setup...");
       if (m_dnsName == NULL) {
         m_state = AFWifiStateReady;
-        break;// don't need to doa nything
-      } else if (m_mdns.begin(m_dnsName, this)) {
-        m_mdns.update(); // do it once...
-        DEBUG_PRINTLN("...DNS ready.");
-        DEBUG_PRINTF("Server started at: %s. Waiting for connection\r\n", m_dnsName);
-        m_state = AFWifiStateReady;
-        // NO fall through
       } else {
-        // just waiting...
-      
-      }
+        uint32_t ipAddress, netmask, gateway, dhcpserv, dnsserv;
+        if (getIPAddress(&ipAddress, &netmask, &gateway, &dhcpserv, &dnsserv) && m_mdns.begin(m_dnsName, ipAddress)) {
+          m_mdns.update(); // do it once...
+          DEBUG_PRINTLN("...DNS ready.");
+          DEBUG_PRINTF("Server started at: %s. \n", m_dnsName);
+          m_state = AFWifiStateReady;
+        } else if ((millis() - m_lastTime) == WLAN_CONNECT_TIMEOUT) {
+          DEBUG_PRINTLN("DNS timeout ------- BUT WE SHOULD HAVE AN IP");
+          m_state = AFWifiStateTimedOut;
+        } else {
+          // just waiting... TODO: timeout
+          DEBUG_PRINTLN("DNS not ready??");
+        }
+        }
       break; // done!
     }
     case AFWifiStateReady: {
@@ -1468,16 +1468,27 @@ void Adafruit_CC3000::process() {
         if (m_dnsName) {
           // throttle this update
           uint32_t now = millis();
-          if ((now - m_lastTime) >= 200) {
+          if ((now - m_lastTime) >= 500) {
             m_mdns.update();
+            //            if (!) {
+//              DEBUG_PRINTLN("... dns update failed");
+//            }
             m_lastTime = now;
           }
         }
       } else {
         DEBUG_PRINTLN("CONNECTION DROPPED!!.");
-
-        m_state = AFWifiStateConnecting; // next loop will connect again
+        m_state = AFWifiStateConnecting; // next loop will connect again....or should I timeout??
       }
+      break;
+    }
+    case AFWifiStateTimedOut: {
+#if DEBUG
+      if ((millis() - m_lastTime) < 1000) {
+        DEBUG_PRINTLN("TIMEOUT!!.");
+        m_lastTime = millis();
+      }
+#endif
       break;
     }
   }

@@ -143,6 +143,7 @@ enum AFWifiState {
     AFWifiStateGettingDHCP,
     AFWifiStateBeginDNS,
     AFWifiStateReady,
+    AFWifiStateTimedOut,
 };
 
 enum AFWifiSecurityMode {

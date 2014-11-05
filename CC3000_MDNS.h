@@ -51,27 +51,32 @@ License (MIT license):
 #include "Client.h"
 #include "utility/socket.h"
 
-class Adafruit_CC3000;
-
 class MDNSResponder {
 public:
-  MDNSResponder();
-  ~MDNSResponder();
-  bool begin(const char* domain, Adafruit_CC3000 *cc3000, uint32_t ttlSeconds = 3600);
-  void update();
-
+    bool begin(const char* domain, uint32_t ip, uint32_t ttlSeconds = 3600);
+    void update();
+    
 private:
-  // Expected query values
-  static uint8_t _queryHeader[];
-  uint8_t* _expected;
-  int _expectedLen;
-  // Current parsing state
-  int _index;
-  // Response data
-  uint8_t* _response;
-  int _responseLen;
-  // Socket for MDNS communication
-  static int _mdnsSocket;
+    // Expected query values
+    static uint8_t _queryHeader[];
+    uint8_t* _queryFQDN;
+    int _queryFQDNLen;
+    // Current parsing state
+    uint8_t* _current;
+    int _currentLen;
+    int _index;
+    uint8_t _FQDNcount;
+    // Response data
+    uint8_t* _response;
+    int _responseLen;
+    // Socket for MDNS communication
+    static int _mdnsSocket;
+    
+    void changeState(uint8_t* state);
+    void sendResponse();
+    
+    uint32_t ip2int(uint8_t first, uint8_t second, uint8_t third, uint8_t forth);
 };
+
 
 #endif
